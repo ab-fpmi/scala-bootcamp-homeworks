@@ -6,8 +6,9 @@ import Basics._
 
 class BasicsSpec extends AnyFlatSpec {
   "lcm" should "work" in {
-    lcm(6, 15) shouldEqual 30
-    lcm(8, 12) shouldEqual 24
+    lcm(6, 15) shouldEqual Some(30)
+    lcm(8, 12) shouldEqual Some(24)
+    lcm(0,0) shouldEqual None
   }
 
   "gcd" should "work" in {
