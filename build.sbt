@@ -11,3 +11,5 @@ lazy val root = (project in file(".")).settings(
     scalaTest % Test
   )
 )
+
+addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.1" cross CrossVersion.full)
