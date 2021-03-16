@@ -10,8 +10,11 @@ lazy val root = (project in file(".")).settings(
   libraryDependencies ++= Seq(
     cats,
     scalaTest % Test,
-    scalaCheck % Test
-  )
+    scalaCheck % Test,
+    scalaj
+  ) ++ circe
 )
 
 addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.3" cross CrossVersion.full)
+
+scalacOptions ++= Seq("-Ymacro-annotations")
