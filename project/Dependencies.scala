@@ -1,8 +1,8 @@
 import sbt._
 
 object Dependencies {
-  val scalaTestVersion = "3.2.5"
-  val scalatestScalacheckVersion = "3.2.5.0"
+  val scalaTestVersion = "3.2.6"
+  val scalatestScalacheckVersion = "3.2.6.0"
   val catsVersion = "2.4.2"
   val circeVersion = "0.13.0"
   val scalajVersion = "2.4.2"
