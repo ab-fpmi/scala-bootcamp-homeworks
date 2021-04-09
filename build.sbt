@@ -9,6 +9,7 @@ lazy val root = (project in file(".")).settings(
   name := "homeworks",
   libraryDependencies ++= Seq(
     cats,
+    catsEffect,
     scalaTest % Test,
     scalaCheck % Test,
     scalaj
@@ -16,5 +17,6 @@ lazy val root = (project in file(".")).settings(
 )
 
 addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.3" cross CrossVersion.full)
+addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
 
 scalacOptions ++= Seq("-Ymacro-annotations")
