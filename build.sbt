@@ -11,6 +11,7 @@ lazy val root = (project in file(".")).settings(
     cats,
     catsEffect,
     scalajHttp,
+    atto,
     scalaTest % Test,
     scalaCheck % Test,
   ) ++ circe
