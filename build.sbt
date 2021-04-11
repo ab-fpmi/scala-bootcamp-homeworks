@@ -10,9 +10,9 @@ lazy val root = (project in file(".")).settings(
   libraryDependencies ++= Seq(
     cats,
     catsEffect,
+    scalajHttp,
     scalaTest % Test,
     scalaCheck % Test,
-    scalaj
   ) ++ circe
 )
 
