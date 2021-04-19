@@ -1,11 +1,10 @@
 package effects
 
-import cats.Monad
 import cats.syntax.all._
+import cats.effect.syntax.all._
 import cats.effect.concurrent.Ref
-import cats.effect.{Clock, Concurrent, ExitCode, Fiber, IO, IOApp, Resource, Sync, Timer}
+import cats.effect.{Bracket, BracketThrow, Clock, Concurrent, ExitCode, Fiber, IO, IOApp, Resource, Sync, Timer}
 
-import java.time.Instant
 import scala.concurrent.duration._
 
 /*
@@ -24,7 +23,7 @@ object SharedStateHomework extends IOApp {
     def cleanup: F[Unit]
   }
 
-  class RefCache[F[_] : Sync : Clock : Monad, K, V](
+  private[effects] class RefCache[F[_] : Sync : Clock, K, V](
     state: Ref[F, Map[K, (Long, V)]],
     expiresIn: FiniteDuration
   ) extends Cache[F, K, V] {
@@ -41,11 +40,7 @@ object SharedStateHomework extends IOApp {
     } yield a
 
     def put(key: K, value: V): F[Unit] = for {
-      expires <- Clock[F].realTime(MILLISECONDS)
-        .map(Instant.ofEpochMilli)
-        .map(_.plus(expiresIn.length, expiresIn.unit.toChronoUnit))
-        .map(_.toEpochMilli)
-      _ <- Sync[F].delay(println(s"<<< $key $expires"))
+      expires <- Clock[F].realTime(MILLISECONDS).map(_ + expiresIn.toMillis)
       _ <- state.update(_ + (key -> (expires, value)))
     } yield ()
 
@@ -61,7 +56,7 @@ object SharedStateHomework extends IOApp {
   }
 
   object Cache {
-    def of[F[_]: Sync : Clock : Monad, K, V](
+    def of[F[_]: Sync : Clock, K, V](
       expiresIn: FiniteDuration
     ): F[Cache[F, K, V]] = for {
       cache <- Ref.of[F, Map[K, (Long, V)]](Map.empty).map(new RefCache[F,K,V](_, expiresIn))
@@ -69,30 +64,44 @@ object SharedStateHomework extends IOApp {
 
   }
 
-  case class CacheManager[F[_], K, V](cache: Cache[F, K, V], cleanupFiber: Fiber[F, Unit])
+  private[effects] sealed abstract case class CacheManager[F[_], K, V](cache: Cache[F, K, V], cleanupFiber: Fiber[F, Unit])
 
   object CacheManager {
-    def of[F[_]: Clock : Timer : Concurrent, K, V](
+    def of[F[_]: Timer : Concurrent, K, V](
       expiresIn: FiniteDuration,
       checkOnExpirationsEvery: FiniteDuration
     ): Resource[F, CacheManager[F, K, V]] = {
       val acquire = for {
         cache <- Cache.of[F, K, V](expiresIn)
-        fib <- Concurrent[F].start(runCleanup(checkOnExpirationsEvery, cache))
-      } yield CacheManager(cache, fib)
+        fib <- runCleanup(checkOnExpirationsEvery, cache).start
+      } yield new CacheManager(cache, fib){}
 
       val release = (cm: CacheManager[F, K, V]) => cm.cleanupFiber.cancel
 
       Resource.make(acquire)(release)
     }
 
-    def runCleanup[F[_]: Sync : Timer, K, V](period: FiniteDuration, cache: Cache[F,K,V]): F[Unit] =
+    class CMResource[F[_]: BracketThrow, K, V](r: Resource[F, CacheManager[F,K,V]]) {
+      def use[A](fn: Cache[F,K,V] => F[A]): F[A] = r.use {
+        case CacheManager(cache, _) => fn(cache)
+      }
+    }
+
+    def useCache[F[_] : Timer : Concurrent, K, V](
+      expiresIn: FiniteDuration,
+      checkOnExpirationsEvery: FiniteDuration
+    ): CMResource[F, K, V] = {
+      val r = of[F, K, V](expiresIn, checkOnExpirationsEvery)
+      new CMResource(r)
+    }
+
+    private def runCleanup[F[_]: Sync : Timer, K, V](period: FiniteDuration, cache: Cache[F,K,V]): F[Unit] =
       Sync[F].foreverM(Timer[F].sleep(period) *> cache.cleanup)
   }
 
   override def run(args: List[String]): IO[ExitCode] = {
-    CacheManager.of[IO, Int, String](10.seconds, 4.seconds).use {
-      case CacheManager(cache, _) => for {
+    CacheManager.useCache[IO, Int, String](10.seconds, 4.seconds).use { cache =>
+      for {
         _ <- cache.put(1, "Hello")
         _ <- cache.put(2, "World")
         _ <- cache.get(1).flatMap(s => IO {

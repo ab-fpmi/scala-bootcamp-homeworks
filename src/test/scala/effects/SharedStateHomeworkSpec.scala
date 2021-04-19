@@ -17,12 +17,11 @@ class SharedStateHomeworkSpec extends AnyFlatSpec with Eventually {
   implicit val cs: ContextShift[IO] = IO.contextShift(ec)
   implicit val timer: Timer[IO] = IO.timer(ec)
 
-  def ioCache: Resource[IO, CacheManager[IO, Int, String]] = CacheManager.of[IO, Int, String](100.millis, 40.millis)
+  private def ioCache = CacheManager.useCache[IO, Int, String](100.millis, 40.millis)
 
   "Cache" should "return stored value" in {
-    val t = ioCache.use {
-      case CacheManager(cache, _) =>
-        for {
+    val t = ioCache.use { cache =>
+      for {
         _ <- cache.put(0, "foo")
         _ <- cache.put(1, "bar")
         a <- cache.get(0)
@@ -34,28 +33,26 @@ class SharedStateHomeworkSpec extends AnyFlatSpec with Eventually {
   }
 
   "Cache" should "not return expired values" in {
-    val t = ioCache.use {
-      case CacheManager(cache, _) =>
-        for {
-          _ <- cache.put(0, "foo")
-          _ <- IO.sleep(120.millis)
-          a <- cache.get(0)
-        } yield a
+    val t = ioCache.use { cache =>
+      for {
+        _ <- cache.put(0, "foo")
+        _ <- IO.sleep(120.millis)
+        a <- cache.get(0)
+      } yield a
     }
 
     t.unsafeToFuture().futureValue shouldBe None
   }
 
   "Expired values" should "be removed from cache" in {
-      val t = ioCache.use {
-        case CacheManager(cache, _) =>
-          for {
-            _ <- cache.put(0, "foo")
-            _ <- IO.sleep(50.millis)
-            _ <- cache.put(1, "bar")
-            _ <- IO.sleep(70.millis)
-            s <- cache.size
-          } yield s
+      val t = ioCache.use { cache =>
+        for {
+          _ <- cache.put(0, "foo")
+          _ <- IO.sleep(50.millis)
+          _ <- cache.put(1, "bar")
+          _ <- IO.sleep(70.millis)
+          s <- cache.size
+        } yield s
       }
 
       t.unsafeToFuture().futureValue shouldBe 1
