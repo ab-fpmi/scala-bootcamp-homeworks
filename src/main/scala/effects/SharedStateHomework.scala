@@ -61,38 +61,25 @@ object SharedStateHomework extends IOApp {
     ): F[Cache[F, K, V]] = for {
       cache <- Ref.of[F, Map[K, (Long, V)]](Map.empty).map(new RefCache[F,K,V](_, expiresIn))
     } yield cache
-
   }
-
-  private[effects] sealed abstract case class CacheManager[F[_], K, V](cache: Cache[F, K, V], cleanupFiber: Fiber[F, Unit])
 
   object CacheManager {
     def of[F[_]: Timer : Concurrent, K, V](
       expiresIn: FiniteDuration,
       checkOnExpirationsEvery: FiniteDuration
-    ): Resource[F, CacheManager[F, K, V]] = {
+    ): Resource[F, Cache[F, K, V]] = {
       val acquire = for {
         cache <- Cache.of[F, K, V](expiresIn)
         fib <- runCleanup(checkOnExpirationsEvery, cache).start
-      } yield new CacheManager(cache, fib){}
+      } yield (cache, fib)
 
-      val release = (cm: CacheManager[F, K, V]) => cm.cleanupFiber.cancel
-
-      Resource.make(acquire)(release)
-    }
-
-    class CMResource[F[_]: BracketThrow, K, V](r: Resource[F, CacheManager[F,K,V]]) {
-      def use[A](fn: Cache[F,K,V] => F[A]): F[A] = r.use {
-        case CacheManager(cache, _) => fn(cache)
+      val release: ((Any, Fiber[F,Unit])) => F[Unit] = {
+        case (_: Any, fib: Fiber[F, Unit]) => fib.cancel
       }
-    }
 
-    def useCache[F[_] : Timer : Concurrent, K, V](
-      expiresIn: FiniteDuration,
-      checkOnExpirationsEvery: FiniteDuration
-    ): CMResource[F, K, V] = {
-      val r = of[F, K, V](expiresIn, checkOnExpirationsEvery)
-      new CMResource(r)
+      Resource.make(acquire)(release).map {
+        case (cache, _) => cache
+      }
     }
 
     private def runCleanup[F[_]: Sync : Timer, K, V](period: FiniteDuration, cache: Cache[F,K,V]): F[Unit] =
@@ -100,7 +87,7 @@ object SharedStateHomework extends IOApp {
   }
 
   override def run(args: List[String]): IO[ExitCode] = {
-    CacheManager.useCache[IO, Int, String](10.seconds, 4.seconds).use { cache =>
+    CacheManager.of[IO, Int, String](10.seconds, 4.seconds).use { cache =>
       for {
         _ <- cache.put(1, "Hello")
         _ <- cache.put(2, "World")

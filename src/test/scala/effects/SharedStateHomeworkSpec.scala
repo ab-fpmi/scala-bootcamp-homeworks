@@ -17,7 +17,7 @@ class SharedStateHomeworkSpec extends AnyFlatSpec with Eventually {
   implicit val cs: ContextShift[IO] = IO.contextShift(ec)
   implicit val timer: Timer[IO] = IO.timer(ec)
 
-  private def ioCache = CacheManager.useCache[IO, Int, String](100.millis, 40.millis)
+  private def ioCache = CacheManager.of[IO, Int, String](100.millis, 40.millis)
 
   "Cache" should "return stored value" in {
     val t = ioCache.use { cache =>
