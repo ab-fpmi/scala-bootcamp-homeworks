@@ -12,9 +12,10 @@ lazy val root = (project in file(".")).settings(
     catsEffect,
     scalajHttp,
     atto,
+    slf4j,
     scalaTest % Test,
     scalaCheck % Test,
-  ) ++ circe
+  ) ++ circe ++ http4s
 )
 
 addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.3" cross CrossVersion.full)

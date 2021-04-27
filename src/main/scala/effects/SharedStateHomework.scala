@@ -19,6 +19,7 @@ object SharedStateHomework extends IOApp {
   trait Cache[F[_], K, V] {
     def get(key: K): F[Option[V]]
     def put(key: K, value: V): F[Unit]
+    def modify[A](key: K)(fn: V => (V, A)): F[Option[A]]
     def size: F[Int]
     def cleanup: F[Unit]
   }
@@ -43,6 +44,23 @@ object SharedStateHomework extends IOApp {
       expires <- Clock[F].realTime(MILLISECONDS).map(_ + expiresIn.toMillis)
       _ <- state.update(_ + (key -> (expires, value)))
     } yield ()
+
+    def modify[A](key: K)(fn: V => (V, A)): F[Option[A]] = for {
+      now <- Clock[F].realTime(MILLISECONDS)
+      result <- state.modify[Option[A]] { m =>
+        m.get(key).flatMap[(V, A)] {
+          case (exp, value) =>
+            if (exp >= now)
+              Some(fn(value))
+            else
+              None
+        }.fold((m, None: Option[A]))(
+          {
+            case (v: V, a: A) => (m + (key -> (now + expiresIn.toMillis, v)), Some(a))
+          }
+        )
+      }
+    } yield result
 
     def size: F[Int] = state.get.map(_.size)
 

@@ -8,6 +8,8 @@ object Dependencies {
   val circeVersion = "0.13.0"
   val scalajHttpVersion = "2.4.2"
   val attoVersion = "0.9.3"
+  val http4sVersion = "0.21.22"
+  val slf4jVersion = "1.7.30"
 
   lazy val scalaTest = "org.scalatest" %% "scalatest" % scalaTestVersion
   lazy val scalaCheck = "org.scalatestplus" %% "scalacheck-1-15" % scalatestScalacheckVersion
@@ -15,6 +17,7 @@ object Dependencies {
   lazy val catsEffect = "org.typelevel" %% "cats-effect" % catsEffectVersion
   lazy val scalajHttp = "org.scalaj" %% "scalaj-http" % scalajHttpVersion
   lazy val atto = "org.tpolecat" %% "atto-core" % attoVersion
+  lazy val slf4j = "org.slf4j" % "slf4j-simple" % slf4jVersion
 
   lazy val circe = Seq(
     "io.circe" %% "circe-core" % circeVersion,
@@ -22,5 +25,13 @@ object Dependencies {
     "io.circe" %% "circe-generic-extras" % circeVersion,
     "io.circe" %% "circe-optics" % circeVersion,
     "io.circe" %% "circe-parser" % circeVersion
+  )
+
+  lazy val http4s = Seq(
+    "org.http4s" %% "http4s-dsl" % http4sVersion,
+    "org.http4s" %% "http4s-blaze-server" % http4sVersion,
+    "org.http4s" %% "http4s-blaze-client" % http4sVersion,
+    "org.http4s" %% "http4s-circe" % http4sVersion
+    // "org.http4s" %% "http4s-jdk-http-client" % "0.3.6",
   )
 }
