@@ -9,6 +9,7 @@ object Dependencies {
   val scalajHttpVersion = "2.4.2"
   val attoVersion = "0.9.3"
   val http4sVersion = "0.21.22"
+  val http4sJdkHttpClientVersion = "0.3.6"
   val slf4jVersion = "1.7.30"
 
   lazy val scalaTest = "org.scalatest" %% "scalatest" % scalaTestVersion
@@ -31,7 +32,7 @@ object Dependencies {
     "org.http4s" %% "http4s-dsl" % http4sVersion,
     "org.http4s" %% "http4s-blaze-server" % http4sVersion,
     "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-    "org.http4s" %% "http4s-circe" % http4sVersion
-    // "org.http4s" %% "http4s-jdk-http-client" % "0.3.6",
+    "org.http4s" %% "http4s-circe" % http4sVersion,
+    "org.http4s" %% "http4s-jdk-http-client" % http4sJdkHttpClientVersion
   )
 }

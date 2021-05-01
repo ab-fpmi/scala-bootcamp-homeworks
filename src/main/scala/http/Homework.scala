@@ -3,13 +3,14 @@ package http
 import cats.data.Kleisli.ask
 import cats.data.{OptionT, ReaderT}
 import cats.effect.concurrent.Ref
-import cats.effect.{ExitCode, IO, IOApp, Sync}
+import cats.effect.{ExitCode, IO, IOApp, Resource, Sync}
 import cats.syntax.all._
 import effects.SharedStateHomework.{Cache, CacheManager}
 import http.Game.GameState
 import io.circe.generic.JsonCodec
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Json}
+import io.circe.parser
 import org.http4s.circe.CirceEntityCodec._
 
 import java.util.UUID
@@ -36,6 +37,9 @@ object Protocol {
       final case class RightOnTheMoney(attempts: Int) extends GuessResponse
       final case class YouLose(answer: Int) extends GuessResponse
     }
+
+    @JsonCodec
+    case class  ProtocolError(error: String)
   }
 
   implicit val guessResponseEncoder: Encoder[GameResponse.GuessResponse] = Encoder.instance {
@@ -190,38 +194,97 @@ object GuessServer extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = run("localhost", 9000)
 }
 
-object GuessClient extends IOApp {
+object WSGuessServer extends IOApp {
   import Protocol._
-  import org.http4s.Method._
-  import org.http4s.client._
-  import org.http4s.client.dsl.io._
+  import Game.GameState
+  import org.http4s.dsl.io._
+  import org.http4s.HttpRoutes
+  import fs2.Pipe
+  import fs2.concurrent.Queue
+  import org.http4s.server.websocket.WebSocketBuilder
+  import org.http4s.websocket.WebSocketFrame
+  import org.http4s.server.blaze.BlazeServerBuilder
   import org.http4s.syntax.all._
-  import org.http4s.client.blaze.BlazeClientBuilder
 
-  private val uri = uri"http://localhost:9000"
+  private val routes = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "ws" =>
+      def gamePipe: Pipe[IO, Json, Json] =
+        _.evalMapAccumulate(None: Option[GameState]) {
+          case (None, j) =>
+            (for {
+              req <- OptionT.fromOption[IO](j.as[GameRequest.NewGame].toOption)
+              game <- GameState.create[IO](req.from, req.to, 5)
+              id <- OptionT.liftF(IO(UUID.randomUUID()))
+            } yield (Some(game), GameResponse.GameStarted(id, game.attempts).asJson))
+              .getOrElse((None, GameResponse.ProtocolError("Wrong request").asJson))
 
-  private def printLine[F[_]: Sync](string: String = ""): F[Unit] = Sync[F].delay(println(string))
-  private def printJson[F[_]: Sync](j: Json) = printLine(j.toString)
+          case (Some(game), j) =>
+            (for {
+              req <- OptionT.fromOption[IO](j.as[GameRequest.Guess].toOption)
+              (updated, response) = game.guess(req.number)
+              newState = Option.when(updated.attempts > 0 && updated.number != req.number)(updated)
+            } yield (newState, response.asJson))
+              .getOrElse((Some(game), GameResponse.ProtocolError("Wrong request").asJson))
+        }.map(_._2)
 
-  private type ClientConfig = Client[IO]
+      val toJson: Pipe[IO, WebSocketFrame, Option[Json]] =
+        _.collect {
+          case WebSocketFrame.Text(message, _) => parser.parse(message).toOption
+        }
 
-  private def newGame: ReaderT[IO, ClientConfig, GameResponse.GameStarted] = {
-    val req = POST(GameRequest.NewGame(0, 100).asJson, uri / "new")
-    for {
-      client <- ask[IO, ClientConfig]
-      response <- ReaderT.liftF(client.expect[GameResponse.GameStarted](req))
-    } yield response
+      val fromJson: Pipe[IO, Json, WebSocketFrame] =
+        _.collect(j => WebSocketFrame.Text(j.toString))
+
+      def getOrElse[A, B](b: => B, p: Pipe[IO, A, B]): Pipe[IO, Option[A], B] = { s =>
+        val s1: Pipe[IO, Option[A], B] = _.filter(_.isEmpty).map(_ => b)
+        val s2: Pipe[IO, Option[A], B] = _.filter(_.isDefined).map(_.get).through(p)
+        s.broadcastThrough(s1, s2)
+      }
+
+      for {
+        queue <- Queue.bounded[IO, WebSocketFrame](10)
+        response <- WebSocketBuilder[IO].build(
+          receive = queue.enqueue,
+          send = queue
+            .dequeue
+            .through(toJson)
+            .through(getOrElse(GameResponse.ProtocolError("Wrong request").asJson, gamePipe))
+            .through(fromJson)
+        )
+      } yield response
   }
 
-   private def guess(gameId: UUID, number: Int): ReaderT[IO, ClientConfig, GameResponse.GuessResponse] = {
-     val req = POST(GameRequest.Guess(gameId, number).asJson, uri / "guess")
-     for {
-       client <- ask[IO, ClientConfig]
-       response <- ReaderT.liftF(client.expect[GameResponse.GuessResponse](req))
-     } yield response
-   }
+  def run(host: String, port: Int): IO[ExitCode] =
+    BlazeServerBuilder[IO](executionContext)
+      .bindHttp(port, host)
+      .withHttpApp(routes.orNotFound)
+      .serve
+      .compile
+      .drain as ExitCode.Success
 
-  private def guessLoop(gameId: UUID, min: Int, max: Int, attempts: Int): ReaderT[IO, ClientConfig, GameResponse.GuessResponse] = {
+  override def run(args: List[String]): IO[ExitCode] = run("localhost", 9000)
+}
+
+trait AbstractGuesClient {
+  import Protocol._
+  import org.http4s._
+
+  protected type ClientConfig
+
+  protected def uri: Uri
+
+  protected def printLine[F[_]: Sync](string: String = ""): F[Unit] = Sync[F].delay(println(string))
+  protected def printJson[F[_]: Sync](j: Json) = printLine(j.toString)
+
+  protected def request[A: Encoder, B: Decoder](cmd: String, m: A): ReaderT[IO, ClientConfig, B]
+
+  protected def newGame(min: Int, max: Int): ReaderT[IO, ClientConfig, GameResponse.GameStarted] =
+    request[GameRequest.NewGame, GameResponse.GameStarted]("new", GameRequest.NewGame(min, max))
+
+  protected def guess(gameId: UUID, number: Int): ReaderT[IO, ClientConfig, GameResponse.GuessResponse] =
+    request[GameRequest.Guess, GameResponse.GuessResponse]("guess", GameRequest.Guess(gameId, number))
+
+  protected def guessLoop(gameId: UUID, min: Int, max: Int, attempts: Int): ReaderT[IO, ClientConfig, GameResponse.GuessResponse] = {
     for {
       v <- if (attempts <= 1)
         ReaderT.liftF[IO, ClientConfig, Int](IO(Random.between(min, max)))
@@ -246,16 +309,69 @@ object GuessClient extends IOApp {
     } yield response
   }
 
-  private def playGame: ReaderT[IO, ClientConfig, Unit] = for {
-    game <- newGame
+  protected def playGame: ReaderT[IO, ClientConfig, Unit] = for {
+    game <- newGame(0, 96)
     _ <- printJson[ReaderT[IO, Any, *]](game.asJson)
     guessResponse <- guessLoop(game.gameId, 0, 96, game.attempts)
     _ <- printJson[ReaderT[IO, Any, *]](guessResponse.asJson)
   } yield ()
+}
+
+object GuessClient extends IOApp with AbstractGuesClient {
+  import org.http4s.Method._
+  import org.http4s.client._
+  import org.http4s.client.dsl.io._
+  import org.http4s.syntax.all._
+  import org.http4s.client.blaze.BlazeClientBuilder
+
+  protected val uri = uri"http://localhost:9000"
+
+  protected type ClientConfig = Client[IO]
+
+  protected def request[A: Encoder, B: Decoder](cmd: String, m: A): ReaderT[IO, ClientConfig, B] = {
+    val req = POST(m.asJson, uri / cmd)
+    for {
+      client <- ask[IO, ClientConfig]
+      response <- ReaderT.liftF(client.expect[B](req))
+    } yield response
+  }
 
   override def run(args: List[String]): IO[ExitCode] =
-    BlazeClientBuilder[IO](executionContext).resource.use { client => for {
-      _ <- playGame.run(client)
-    } yield ()
+    BlazeClientBuilder[IO](executionContext).resource.use { client =>
+      playGame.run(client)
   } as ExitCode.Success
+}
+
+object WSGuessClient extends IOApp with AbstractGuesClient {
+  import org.http4s.client.jdkhttpclient.{JdkWSClient, WSConnectionHighLevel, WSFrame, WSRequest}
+  import java.net.http.HttpClient
+  import org.http4s.syntax.all._
+
+  protected val uri = uri"ws://localhost:9000/ws"
+
+  protected type ClientConfig = WSConnectionHighLevel[IO]
+
+  protected def send[A: Encoder](m: A): ReaderT[IO, ClientConfig, Unit] = {
+    val req = WSFrame.Text(m.asJson.noSpaces)
+    for {
+      client <- ask[IO, ClientConfig]
+      _ <- ReaderT.liftF(client.send(req))
+    } yield ()
+  }
+
+  protected def receive[A: Decoder]: ReaderT[IO, ClientConfig, A] = for {
+    client <- ask[IO, ClientConfig]
+    response <- ReaderT.liftF(client.receiveStream.collectFirst {
+      case WSFrame.Text(msg, _) => msg
+    }.compile.string)
+  } yield parser.parse(response).toOption.get.as[A].toOption.get
+
+  protected def request[A: Encoder, B: Decoder](cmd: String, m: A) = send(m) >> receive
+
+  override def run(args: List[String]): IO[ExitCode] =
+    Resource.eval(IO(HttpClient.newHttpClient()))
+      .flatMap(JdkWSClient[IO](_).connectHighLevel(WSRequest(uri)))
+      .use { client =>
+        playGame.run(client)
+      } as ExitCode.Success
 }
