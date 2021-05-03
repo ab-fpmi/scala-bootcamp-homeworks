@@ -11,6 +11,7 @@ object Dependencies {
   val http4sVersion = "0.21.22"
   val http4sJdkHttpClientVersion = "0.3.6"
   val slf4jVersion = "1.7.30"
+  val akkaVersion = "2.6.14"
 
   lazy val scalaTest = "org.scalatest" %% "scalatest" % scalaTestVersion
   lazy val scalaCheck = "org.scalatestplus" %% "scalacheck-1-15" % scalatestScalacheckVersion
@@ -19,6 +20,7 @@ object Dependencies {
   lazy val scalajHttp = "org.scalaj" %% "scalaj-http" % scalajHttpVersion
   lazy val atto = "org.tpolecat" %% "atto-core" % attoVersion
   lazy val slf4j = "org.slf4j" % "slf4j-simple" % slf4jVersion
+  lazy val akka =   "com.typesafe.akka" %% "akka-actor" % akkaVersion
 
   lazy val circe = Seq(
     "io.circe" %% "circe-core" % circeVersion,

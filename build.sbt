@@ -13,6 +13,7 @@ lazy val root = (project in file(".")).settings(
     scalajHttp,
     atto,
     slf4j,
+    akka,
     scalaTest % Test,
     scalaCheck % Test,
   ) ++ circe ++ http4s
